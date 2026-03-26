@@ -1,0 +1,12 @@
+{
+  "name": "togever",
+  "version": "1.0.0",
+  "description": "TOGEVER - P2P WebRTC Watch Party",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "npm install --prefix backend && npm install --prefix frontend && npm run build --prefix frontend",
+    "start": "node backend/server.js"
+  }
+}
