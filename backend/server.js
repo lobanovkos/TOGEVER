@@ -51,6 +51,10 @@ io.on('connection', (socket) => {
     io.to(payload.target).emit('chat-message', payload);
   });
 
+  socket.on('quality-request', (payload) => {
+    io.to(payload.target).emit('quality-request', payload);
+  });
+
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
     socket.broadcast.emit('user-disconnected', socket.id);
@@ -60,6 +64,6 @@ io.on('connection', (socket) => {
 
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`Signaling server running on port ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Signaling server running on port ${PORT} (bind 0.0.0.0)`);
 });
