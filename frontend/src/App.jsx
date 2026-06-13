@@ -685,7 +685,8 @@ export default function App() {
     if (window.gifTimeout) clearTimeout(window.gifTimeout);
     window.gifTimeout = setTimeout(async () => {
       try {
-        const res = await fetch(`https://g.tenor.com/v1/search?key=LIVDSRZULELA&q=${query}&limit=12`);
+        const url = import.meta.env.DEV ? `http://localhost:5000/api/gifs` : `/api/gifs`;
+        const res = await fetch(`${url}?q=${encodeURIComponent(query)}`);
         const data = await res.json();
         setGifs(data.results || []);
       } catch (err) { console.error('[TOGEVER] GIF fetch error:', err); }

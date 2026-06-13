@@ -20,6 +20,19 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', uptime: Math.floor(process.uptime()), connections: io.engine.clientsCount });
 });
 
+app.get('/api/gifs', async (req, res) => {
+  try {
+    const q = req.query.q;
+    if (!q) return res.json({ results: [] });
+    const response = await fetch(`https://g.tenor.com/v1/search?key=LIVDSRZULELA&q=${encodeURIComponent(q)}&limit=12`);
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    console.error('[SERVER] GIF proxy error:', err);
+    res.status(500).json({ results: [] });
+  }
+});
+
 const DIST = path.join(__dirname, '../frontend/dist');
 app.use(express.static(DIST));
 app.get('/{*path}', (req, res) => {
