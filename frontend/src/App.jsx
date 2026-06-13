@@ -35,12 +35,29 @@ const dotColor = (value, greenThresh, yellowThresh, higherIsBetter = true) => {
 
 const SOCKET_SERVER_URL = import.meta.env.DEV ? 'http://localhost:5000' : '/';
 
+// TURN credentials injected via environment variables (set in Railway dashboard)
+// VITE_TURN_USERNAME and VITE_TURN_CREDENTIAL come from your Metered.ca account
+const TURN_USER = import.meta.env.VITE_TURN_USERNAME || '';
+const TURN_CRED = import.meta.env.VITE_TURN_CREDENTIAL || '';
+
 const ICE_SERVERS = [
+  // Google STUN servers (free, always available, for direct P2P)
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'turn:openrelay.metered.rs:80',          username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.rs:443',         username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.rs:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  // Metered.ca TURN servers — reliable paid infrastructure, needed when P2P fails (Russia ↔ Finland)
+  // Sign up free at https://dashboard.metered.ca/signup to get YOUR_USERNAME and YOUR_CREDENTIAL
+  ...(TURN_USER && TURN_CRED ? [
+    { urls: 'turn:eu.relay.metered.ca:80',              username: TURN_USER, credential: TURN_CRED },
+    { urls: 'turn:eu.relay.metered.ca:443',             username: TURN_USER, credential: TURN_CRED },
+    { urls: 'turns:eu.relay.metered.ca:443',            username: TURN_USER, credential: TURN_CRED },
+    { urls: 'turn:eu.relay.metered.ca:80?transport=tcp',username: TURN_USER, credential: TURN_CRED },
+  ] : [
+    // Fallback to openrelay if no Metered credentials set (better than nothing)
+    { urls: 'turn:openrelay.metered.rs:80',               username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.rs:443',              username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.rs:443?transport=tcp',username: 'openrelayproject', credential: 'openrelayproject' },
+  ]),
 ];
 
 export default function App() {
