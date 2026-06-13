@@ -111,26 +111,23 @@ export default function App() {
   useEffect(() => { inRoomRef.current = inRoom; }, [inRoom]);
   useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
 
-  // ── Fetch dynamic TURN credentials from Metered.ca API ───────────────────
+  // ── Set custom Hetzner TURN credentials ───────────────────
   useEffect(() => {
-    if (!METERED_DOMAIN || !METERED_API_KEY) {
-      console.warn('[TOGEVER] No Metered credentials set — using STUN only (P2P may fail through NAT)');
-      return;
-    }
-    const url = `https://${METERED_DOMAIN}/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`;
-    fetch(url)
-      .then(r => r.json())
-      .then(servers => {
-        if (Array.isArray(servers)) {
-          iceServersRef.current = servers;
-          console.log('[TOGEVER] Metered ICE servers loaded:', servers.length, 'servers');
-        } else {
-          console.error('[TOGEVER] Metered API returned error, fallback to STUN:', servers);
-        }
-      })
-      .catch(err => {
-        console.error('[TOGEVER] Failed to fetch Metered TURN credentials, using STUN only:', err);
-      });
+    const servers = [
+      { urls: 'stun:91.99.127.255:3478' },
+      {
+        urls: 'turn:91.99.127.255:3478',
+        username: 'togever',
+        credential: 'togever_super_movie_123'
+      },
+      {
+        urls: 'turn:91.99.127.255:3478?transport=tcp',
+        username: 'togever',
+        credential: 'togever_super_movie_123'
+      }
+    ];
+    iceServersRef.current = servers;
+    console.log('[TOGEVER] Custom Hetzner TURN servers loaded');
   }, []);
 
   // ── Auto-scroll chat ──────────────────────────────────────────────────────
