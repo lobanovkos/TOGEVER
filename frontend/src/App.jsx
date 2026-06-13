@@ -590,6 +590,7 @@ export default function App() {
     audioElementsRef.current = [];
 
     setInRoom(false); setIsMicMuted(true); setIsScreenSharing(false);
+
     setIsConnected(false); setRemoteSocketId(null); setHasRemoteVideo(false);
     setChatMessages([]);
     window.history.pushState({}, '', '/');
@@ -648,10 +649,33 @@ export default function App() {
   const handleSendMessage = (e) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
-    const msg = { text: chatInput.trim(), sender: 'me', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+    const msg = { text: chatInput.trim(), type: 'text', sender: 'me', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
     setChatMessages(prev => [...prev, msg]);
-    socketRef.current.emit('chat-message', { target: remoteSocketId, text: chatInput.trim() });
+    socketRef.current.emit('chat-message', { target: remoteSocketId, text: chatInput.trim(), type: 'text' });
     setChatInput('');
+  };
+
+  const handleGifSearch = (query) => {
+    setGifSearchQuery(query);
+    if (!query) { setGifs([]); return; }
+    
+    if (window.gifTimeout) clearTimeout(window.gifTimeout);
+    window.gifTimeout = setTimeout(async () => {
+      try {
+        const res = await fetch(`https://g.tenor.com/v1/search?key=LIVDSRZULELA&q=${query}&limit=12`);
+        const data = await res.json();
+        setGifs(data.results || []);
+      } catch (err) { console.error('[TOGEVER] GIF fetch error:', err); }
+    }, 400);
+  };
+
+  const sendGif = (url) => {
+    const payload = { target: remoteSocketId, type: 'gif', gifUrl: url };
+    socketRef.current.emit('chat-message', payload);
+    setChatMessages(prev => [...prev, { ...payload, sender: 'me', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+    setShowGifPicker(false);
+    setGifSearchQuery('');
+    setGifs([]);
   };
 
   // ── Volume sync to audio elements ─────────────────────────────────────────
@@ -974,7 +998,7 @@ export default function App() {
                         <form onSubmit={handleSendMessage} className="p-3 flex gap-2 w-[320px]">
                           <button
                             type="button"
-                            onClick={() => setShowGifPicker(!showGifPicker)}
+                            onClick={(e) => { e.preventDefault(); setShowGifPicker(!showGifPicker); }}
                             className={`p-2 rounded-lg transition text-xs font-bold uppercase tracking-wider ${showGifPicker ? 'bg-purple-600 text-white' : 'bg-white/10 text-neutral-400 hover:text-white hover:bg-white/20'}`}
                           >
                             GIF
