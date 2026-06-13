@@ -130,12 +130,25 @@ export default function App() {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [chatMessages, isChatOpen]);
 
-  // ── Socket init ───────────────────────────────────────────────────────────
+  // ── Socket init ───────────────────────────────────────────────
   useEffect(() => {
-    const socket = io(SOCKET_SERVER_URL);
+    const socket = io(SOCKET_SERVER_URL, {
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+    });
     socketRef.current = socket;
 
-    socket.on('connect', () => console.log('[TOGEVER] Socket connected', socket.id));
+    socket.on('connect', () => {
+      console.log('[TOGEVER] Socket connected', socket.id);
+      // Auto-rejoin room if we were in one (handles Socket.IO reconnects)
+      const currentRoom = new URLSearchParams(window.location.search).get('room');
+      if (currentRoom) {
+        console.log('[TOGEVER] Rejoining room after reconnect:', currentRoom);
+        socket.emit('join-room', currentRoom);
+      }
+    });
 
     socket.on('user-connected', (id) => {
       console.log('[TOGEVER] Peer joined:', id);
@@ -217,8 +230,13 @@ export default function App() {
       setIsChatOpen(true);
     });
 
-    socket.on('user-disconnected', () => {
-      console.log('[TOGEVER] Peer disconnected');
+    socket.on('user-disconnected', (disconnectedId) => {
+      // Only reset if it's actually OUR peer who disconnected, not some random user
+      if (disconnectedId && remoteSocketIdRef.current && disconnectedId !== remoteSocketIdRef.current) {
+        console.log('[TOGEVER] Ignoring disconnect of non-peer:', disconnectedId);
+        return;
+      }
+      console.log('[TOGEVER] Peer disconnected:', disconnectedId);
       setRemoteSocketId(null);
       setIsConnected(false);
       setHasRemoteVideo(false);
