@@ -22,8 +22,8 @@ app.get('/health', (req, res) => {
 // ── Serve built frontend ───────────────────────────────────────────────────────
 const DIST = path.join(__dirname, '../frontend/dist');
 app.use(express.static(DIST));
-// SPA fallback — must be LAST
-app.get('*', (req, res) => {
+// SPA fallback — must be LAST (Express 5 syntax: '/{*path}' instead of '*')
+app.get('/{*path}', (req, res) => {
   res.sendFile(path.join(DIST, 'index.html'), (err) => {
     if (err) res.status(200).json({ status: 'ok' }); // graceful fallback if dist not built yet
   });
