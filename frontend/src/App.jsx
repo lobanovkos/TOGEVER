@@ -35,29 +35,16 @@ const dotColor = (value, greenThresh, yellowThresh, higherIsBetter = true) => {
 
 const SOCKET_SERVER_URL = import.meta.env.DEV ? 'http://localhost:5000' : '/';
 
-// TURN credentials injected via environment variables (set in Railway dashboard)
-// VITE_TURN_USERNAME and VITE_TURN_CREDENTIAL come from your Metered.ca account
-const TURN_USER = import.meta.env.VITE_TURN_USERNAME || '';
-const TURN_CRED = import.meta.env.VITE_TURN_CREDENTIAL || '';
+// Metered.ca Dynamic TURN API — credentials are fetched fresh on every load
+// Set VITE_METERED_DOMAIN and VITE_METERED_API_KEY in Railway dashboard (Variables tab)
+const METERED_DOMAIN  = import.meta.env.VITE_METERED_DOMAIN  || '';
+const METERED_API_KEY = import.meta.env.VITE_METERED_API_KEY || '';
 
-const ICE_SERVERS = [
-  // Google STUN servers (free, always available, for direct P2P)
+// Fallback STUN-only config used before Metered credentials are loaded
+const STUN_ONLY = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun3.l.google.com:19302' },
-  // Metered.ca TURN servers — reliable paid infrastructure, needed when P2P fails (Russia ↔ Finland)
-  // Sign up free at https://dashboard.metered.ca/signup to get YOUR_USERNAME and YOUR_CREDENTIAL
-  ...(TURN_USER && TURN_CRED ? [
-    { urls: 'turn:eu.relay.metered.ca:80',              username: TURN_USER, credential: TURN_CRED },
-    { urls: 'turn:eu.relay.metered.ca:443',             username: TURN_USER, credential: TURN_CRED },
-    { urls: 'turns:eu.relay.metered.ca:443',            username: TURN_USER, credential: TURN_CRED },
-    { urls: 'turn:eu.relay.metered.ca:80?transport=tcp',username: TURN_USER, credential: TURN_CRED },
-  ] : [
-    // Fallback to openrelay if no Metered credentials set (better than nothing)
-    { urls: 'turn:openrelay.metered.rs:80',               username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.rs:443',              username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.rs:443?transport=tcp',username: 'openrelayproject', credential: 'openrelayproject' },
-  ]),
 ];
 
 export default function App() {
@@ -115,9 +102,28 @@ export default function App() {
   const remoteSocketIdRef = useRef(null);
   const statsBaselineRef  = useRef({ bytesReceived: 0, timestamp: 0 });
   const micGainRef        = useRef(1.0);   // mirror of micGain state (for sync callbacks)
+  const iceServersRef     = useRef(STUN_ONLY); // populated async from Metered.ca API
 
   // Keep ref in sync with state
   useEffect(() => { micGainRef.current = micGain; }, [micGain]);
+
+  // ── Fetch dynamic TURN credentials from Metered.ca API ───────────────────
+  useEffect(() => {
+    if (!METERED_DOMAIN || !METERED_API_KEY) {
+      console.warn('[TOGEVER] No Metered credentials set — using STUN only (P2P may fail through NAT)');
+      return;
+    }
+    const url = `https://${METERED_DOMAIN}/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`;
+    fetch(url)
+      .then(r => r.json())
+      .then(servers => {
+        iceServersRef.current = servers;
+        console.log('[TOGEVER] Metered ICE servers loaded:', servers.length, 'servers');
+      })
+      .catch(err => {
+        console.error('[TOGEVER] Failed to fetch Metered TURN credentials, using STUN only:', err);
+      });
+  }, []);
 
   // ── Auto-scroll chat ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -303,7 +309,7 @@ export default function App() {
     // Return existing PC (avoids duplicates from double-trigger)
     if (pcRef.current && pcRef.current.signalingState !== 'closed') return pcRef.current;
 
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
 
     pc.onicecandidate = (e) => {
       if (e.candidate) socketRef.current.emit('ice-candidate', { target: targetId, candidate: e.candidate });
