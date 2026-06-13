@@ -368,6 +368,15 @@ export default function App() {
     return () => clearInterval(interval);
   }, [autoDowngraded]);
 
+  const broadcastTrackMeta = (target) => {
+    if (localStreamRef.current) {
+      socketRef.current?.emit('track-meta', { target, streamId: localStreamRef.current.id, kind: 'mic' });
+    }
+    if (screenStreamRef.current) {
+      socketRef.current?.emit('track-meta', { target, streamId: screenStreamRef.current.id, kind: 'screen' });
+    }
+  };
+
   // ── createPeerConnection ──────────────────────────────────────────────────
   const createPeerConnection = (targetId) => {
     // Return existing PC (avoids duplicates from double-trigger)
@@ -381,7 +390,10 @@ export default function App() {
 
     pc.onconnectionstatechange = () => {
       console.log('[TOGEVER] Connection:', pc.connectionState);
-      if (pc.connectionState === 'connected')  { setReconnecting(false); }
+      if (pc.connectionState === 'connected') { 
+        setReconnecting(false); 
+        broadcastTrackMeta(targetId);
+      }
       if (pc.connectionState === 'failed') {
         setReconnecting(true);
         pc.close();
