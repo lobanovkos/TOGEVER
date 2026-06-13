@@ -393,30 +393,53 @@ export default function App() {
         const audioEl = new Audio();
         audioEl.autoplay = true;
 
+        // Safari WebRTC WebAudio bug workaround: 
+        // We MUST attach the raw remote stream to an HTMLAudioElement (even muted) 
+        // to force the browser to decode and flow the audio data into the AudioContext.
+        const dummyAudio = new Audio();
+        dummyAudio.srcObject = new MediaStream([track]);
+        dummyAudio.muted = true;
+        dummyAudio.play().catch(() => {});
+
         // Apply GainNode to remote track
-        const ctx = new AudioContext();
-        audioCtxRef.current = ctx; // Save to close later
-        const source = ctx.createMediaStreamSource(new MediaStream([track]));
-        const gain = ctx.createGain();
-        gain.gain.value = remoteMicGainRef.current;
-        gainNodeRef.current = gain; // Save for volume adjustments
-        
-        const dest = ctx.createMediaStreamDestination();
-        destNodeRef.current = dest;
+        const ctx = new window.AudioContext || window.webkitAudioContext ? new (window.AudioContext || window.webkitAudioContext)() : null;
+        if (!ctx) {
+          // Fallback if WebAudio is entirely unsupported
+          audioEl.srcObject = dummyAudio.srcObject;
+        } else {
+          audioCtxRef.current = ctx;
+          
+          const source = ctx.createMediaStreamSource(dummyAudio.srcObject);
+          const gain = ctx.createGain();
+          gain.gain.value = remoteMicGainRef.current;
+          gainNodeRef.current = gain;
+          
+          const dest = ctx.createMediaStreamDestination();
+          destNodeRef.current = dest;
 
-        source.connect(gain);
-        gain.connect(dest);
+          source.connect(gain);
+          gain.connect(dest);
 
-        audioEl.srcObject = dest.stream;
+          audioEl.srcObject = dest.stream;
+        }
+
         audioEl.volume = volume;
         audioElementsRef.current.push(audioEl);
         audioEl.play().catch(err => {
           console.warn('[TOGEVER] Audio autoplay blocked — showing unlock button:', err);
           setNeedAudioUnlock(true);
         });
+
+        if (ctx && ctx.state === 'suspended') {
+          console.warn('[TOGEVER] AudioContext suspended, showing unlock button');
+          setNeedAudioUnlock(true);
+        }
+
         track.onended = () => {
           audioEl.pause();
           audioEl.srcObject = null;
+          dummyAudio.pause();
+          dummyAudio.srcObject = null;
           audioElementsRef.current = audioElementsRef.current.filter(el => el !== audioEl);
           if (audioCtxRef.current) {
             audioCtxRef.current.close().catch(() => {});
@@ -689,6 +712,9 @@ export default function App() {
   const unlockAudio = () => {
     audioElementsRef.current.forEach(el => el.play().catch(() => {}));
     if (remoteVideoRef.current) remoteVideoRef.current.play().catch(() => {});
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume().catch(console.error);
+    }
     setNeedAudioUnlock(false);
   };
 
