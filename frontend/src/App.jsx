@@ -69,7 +69,8 @@ export default function App() {
   const [autoDowngraded, setAutoDowngraded] = useState(false);
   const [volume,         setVolume]         = useState(1);
   const [brightness,     setBrightness]     = useState(1.0);
-  const [remoteMicGain,   setRemoteMicGain]  = useState(1.0);
+  const [remoteMicGain,  setRemoteMicGain]  = useState(1.0);
+  const [localMicGain,   setLocalMicGain]   = useState(1.0);
 
   // ── Chat State ────────────────────────────────────────────────────────────
   const [isChatOpen,    setIsChatOpen]    = useState(false);
@@ -92,9 +93,12 @@ export default function App() {
   const pcRef             = useRef(null);
   const localStreamRef    = useRef(null);   // MediaStream of local mic/screen tracks added to PC
   const rawMicStreamRef   = useRef(null);   // raw getUserMedia stream (hardware)
-  const audioCtxRef       = useRef(null);   // Web Audio context for gain boost
-  const gainNodeRef       = useRef(null);   // GainNode — keep alive so GC doesn't kill the track
-  const destNodeRef       = useRef(null);   // MediaStreamDestinationNode — keep alive
+  const audioCtxRef       = useRef(null);   // Web Audio context for remote peer
+  const gainNodeRef       = useRef(null);   // GainNode for remote peer
+  const destNodeRef       = useRef(null);   // MediaStreamDestinationNode for remote peer
+  const localAudioCtxRef  = useRef(null);
+  const localGainNodeRef  = useRef(null);
+  const localDestNodeRef  = useRef(null);
   const screenStreamRef   = useRef(null);
   const remoteVideoRef    = useRef(null);
   const audioElementsRef  = useRef([]);
@@ -104,13 +108,15 @@ export default function App() {
   const signalingQueue    = useRef(Promise.resolve());
   const remoteSocketIdRef = useRef(null);
   const statsBaselineRef  = useRef({ bytesReceived: 0, timestamp: 0 });
-  const remoteMicGainRef  = useRef(1.0);   // mirror of remoteMicGain state (for sync callbacks)
+  const remoteMicGainRef  = useRef(1.0);
+  const localMicGainRef   = useRef(1.0);
   const iceServersRef     = useRef(STUN_ONLY); // populated async from Metered.ca API
   const inRoomRef         = useRef(false);     // mirrors inRoom state for use in socket callbacks
   const roomIdRef         = useRef('');        // mirrors roomId state for reconnect logic
 
   // Keep refs in sync with state
   useEffect(() => { remoteMicGainRef.current = remoteMicGain; }, [remoteMicGain]);
+  useEffect(() => { localMicGainRef.current = localMicGain; }, [localMicGain]);
   useEffect(() => { inRoomRef.current = inRoom; }, [inRoom]);
   useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
 
@@ -484,24 +490,40 @@ export default function App() {
         });
         rawMicStreamRef.current = rawStream;
 
-        // Get raw mic track
-        const rawMicTrack = rawStream.getAudioTracks()[0];
+        // Build gain pipeline for local mic
+        const ctx  = new (window.AudioContext || window.webkitAudioContext)();
+        await ctx.resume(); // ensure running (Chrome may suspend new contexts)
+        localAudioCtxRef.current = ctx;
+
+        const source   = ctx.createMediaStreamSource(rawStream);
+        const gain     = ctx.createGain();
+        gain.gain.value = localMicGainRef.current;
+        localGainNodeRef.current = gain;
+
+        const dest = ctx.createMediaStreamDestination();
+        localDestNodeRef.current = dest;     // keep ref so it's not GC'd
+
+        source.connect(gain);
+        gain.connect(dest);
+
+        // The boosted audio track that goes into WebRTC
+        const boostedTrack = dest.stream.getAudioTracks()[0];
 
         if (!localStreamRef.current) localStreamRef.current = new MediaStream();
-        localStreamRef.current.addTrack(rawMicTrack);
+        localStreamRef.current.addTrack(boostedTrack);
 
         if (pcRef.current) {
           try {
-            pcRef.current.addTrack(rawMicTrack, localStreamRef.current);
+            pcRef.current.addTrack(boostedTrack, localStreamRef.current);
           } catch (err) {
             console.warn('[TOGEVER] addTrack failed, replaceTrack fallback:', err);
             const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'audio');
-            if (sender) await sender.replaceTrack(rawMicTrack);
+            if (sender) await sender.replaceTrack(boostedTrack);
           }
         }
 
         setIsMicMuted(false);
-        console.log('[TOGEVER] Mic ON');
+        console.log('[TOGEVER] Local Mic ON, gain =', localMicGainRef.current);
       } catch (err) {
         console.error('[TOGEVER] Mic access error:', err);
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
@@ -526,7 +548,13 @@ export default function App() {
       // 2. Stop hardware mic
       rawMicStreamRef.current?.getTracks().forEach(t => t.stop());
       rawMicStreamRef.current = null;
-      // We removed AudioContext from local mic, so nothing to close here
+      // 3. Cleanup local AudioContext
+      if (localAudioCtxRef.current) {
+        localAudioCtxRef.current.close().catch(() => {});
+        localAudioCtxRef.current = null;
+        localGainNodeRef.current = null;
+        localDestNodeRef.current = null;
+      }
       setIsMicMuted(true);
       console.log('[TOGEVER] Mic OFF');
     }
@@ -537,6 +565,13 @@ export default function App() {
     setRemoteMicGain(val);
     remoteMicGainRef.current = val;
     if (gainNodeRef.current) gainNodeRef.current.gain.value = val;
+  };
+
+  const handleLocalMicGainChange = (e) => {
+    const val = parseFloat(e.target.value);
+    setLocalMicGain(val);
+    localMicGainRef.current = val;
+    if (localGainNodeRef.current) localGainNodeRef.current.gain.value = val;
   };
 
   // ── Screen Share ──────────────────────────────────────────────────────────
@@ -1146,17 +1181,34 @@ export default function App() {
                       <div className="flex flex-col gap-2">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <Mic className="w-3.5 h-3.5 text-green-400" />
-                            <h3 className="text-xs font-semibold text-neutral-300 uppercase tracking-wider">Peer Volume</h3>
+                            <Mic className="w-3.5 h-3.5 text-blue-400" />
+                            <h3 className="text-xs font-semibold text-neutral-300 uppercase tracking-wider">Brother's Volume</h3>
                           </div>
                           <span className="text-xs text-neutral-500">{remoteMicGain.toFixed(1)}×</span>
                         </div>
                         <input
                           type="range" min="0.0" max="5.0" step="0.1" value={remoteMicGain}
                           onChange={handleRemoteMicGainChange}
+                          className="w-full accent-blue-500 cursor-pointer"
+                        />
+                        <span className="text-[10px] text-blue-400/70">Adjust what you hear from him</span>
+                      </div>
+
+                      {/* Local Mic Boost */}
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Mic className="w-3.5 h-3.5 text-green-400" />
+                            <h3 className="text-xs font-semibold text-neutral-300 uppercase tracking-wider">My Mic Boost</h3>
+                          </div>
+                          <span className="text-xs text-neutral-500">{localMicGain.toFixed(1)}×</span>
+                        </div>
+                        <input
+                          type="range" min="0.5" max="5.0" step="0.1" value={localMicGain}
+                          onChange={handleLocalMicGainChange}
                           className="w-full accent-green-500 cursor-pointer"
                         />
-                        <span className="text-[10px] text-green-400/70">Boost or mute brother's mic</span>
+                        <span className="text-[10px] text-green-400/70">Boost your own microphone</span>
                       </div>
 
                       <div className="border-t border-white/10" />
