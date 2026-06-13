@@ -208,6 +208,7 @@ export default function App() {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         socket.emit('answer', { target: payload.caller, sdp: pc.localDescription });
+        broadcastTrackMeta(payload.caller);
       }).catch(console.error);
     });
 
@@ -250,14 +251,17 @@ export default function App() {
     });
 
     socket.on('track-meta', (payload) => {
-      trackMetaRef.current[payload.streamId] = payload.kind;
-      remoteAudioTracksRef.current.forEach(t => {
-        if (t.streamId === payload.streamId) {
-          t.kind = payload.kind;
-          if (t.gainNode) {
-            t.gainNode.gain.value = payload.kind === 'screen' ? 1.0 : remoteMicGainRef.current;
+      if (!payload.metas) return;
+      payload.metas.forEach(m => {
+        trackMetaRef.current[m.mid] = m.kind;
+        remoteAudioTracksRef.current.forEach(t => {
+          if (t.mid === m.mid) {
+            t.kind = m.kind;
+            if (t.gainNode) {
+              t.gainNode.gain.value = m.kind === 'screen' ? 1.0 : remoteMicGainRef.current;
+            }
           }
-        }
+        });
       });
     });
 
@@ -369,11 +373,19 @@ export default function App() {
   }, [autoDowngraded]);
 
   const broadcastTrackMeta = (target) => {
-    if (localStreamRef.current) {
-      socketRef.current?.emit('track-meta', { target, streamId: localStreamRef.current.id, kind: 'mic' });
-    }
-    if (screenStreamRef.current) {
-      socketRef.current?.emit('track-meta', { target, streamId: screenStreamRef.current.id, kind: 'screen' });
+    if (!pcRef.current) return;
+    const metas = [];
+    pcRef.current.getTransceivers().forEach(t => {
+      if (!t.mid || !t.sender.track || t.sender.track.kind !== 'audio') return;
+      
+      if (localStreamRef.current?.getTracks().includes(t.sender.track)) {
+        metas.push({ mid: t.mid, kind: 'mic' });
+      } else if (screenStreamRef.current?.getTracks().includes(t.sender.track)) {
+        metas.push({ mid: t.mid, kind: 'screen' });
+      }
+    });
+    if (metas.length > 0) {
+      socketRef.current?.emit('track-meta', { target, metas });
     }
   };
 
@@ -405,6 +417,9 @@ export default function App() {
           const newPc = createPeerConnection(tid);
           localStreamRef.current?.getTracks().forEach(t => {
             try { newPc.addTrack(t, localStreamRef.current); } catch (_) {}
+          });
+          screenStreamRef.current?.getTracks().forEach(t => {
+            try { newPc.addTrack(t, screenStreamRef.current); } catch (_) {}
           });
         }, 2000);
       }
@@ -459,11 +474,11 @@ export default function App() {
           const source = ctx.createMediaStreamSource(dummyAudio.srcObject);
           const gain = ctx.createGain();
           
-          const streamId = event.streams && event.streams[0] ? event.streams[0].id : null;
-          const kind = (streamId && trackMetaRef.current[streamId]) ? trackMetaRef.current[streamId] : 'unknown';
+          const mid = event.transceiver?.mid;
+          const kind = (mid && trackMetaRef.current[mid]) ? trackMetaRef.current[mid] : 'unknown';
           gain.gain.value = kind === 'screen' ? 1.0 : remoteMicGainRef.current;
           
-          remoteAudioTracksRef.current.push({ trackId: track.id, streamId, gainNode: gain, kind });
+          remoteAudioTracksRef.current.push({ trackId: track.id, mid, gainNode: gain, kind });
           
           const dest = ctx.createMediaStreamDestination();
           destNodeRef.current = dest;
@@ -509,11 +524,13 @@ export default function App() {
         const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
         await pc.setLocalDescription(offer);
         socketRef.current.emit('offer', { target: targetId, caller: socketRef.current.id, sdp: pc.localDescription });
+        broadcastTrackMeta(targetId);
       } catch (err) { console.error('[TOGEVER] Negotiation error:', err); }
     };
 
     // Add existing local tracks (e.g. mic already enabled)
     localStreamRef.current?.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current));
+    screenStreamRef.current?.getTracks().forEach(t => pc.addTrack(t, screenStreamRef.current));
 
     pcRef.current = pc;
     return pc;
@@ -566,7 +583,7 @@ export default function App() {
             const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'audio');
             if (sender) await sender.replaceTrack(boostedTrack);
           }
-          socketRef.current?.emit('track-meta', { target: remoteSocketIdRef.current, streamId: localStreamRef.current.id, kind: 'mic' });
+          // Note: broadcastTrackMeta is handled via onnegotiationneeded or connect event
         }
 
         setIsMicMuted(false);
@@ -654,9 +671,7 @@ export default function App() {
         stream.getTracks().forEach(track => {
           if (pcRef.current) {
             pcRef.current.addTrack(track, stream);
-            if (track.kind === 'audio') {
-              socketRef.current?.emit('track-meta', { target: remoteSocketIdRef.current, streamId: stream.id, kind: 'screen' });
-            }
+            // Note: broadcastTrackMeta is handled via onnegotiationneeded
           }
           track.onended = () => { if (screenStreamRef.current) stopScreenSharingLogic(); };
         });
