@@ -42,6 +42,7 @@ app.get('/{*path}', (req, res) => {
 });
 
 const socketRooms = new Map();
+const roomHistory = new Map(); // Stores chat messages per room
 
 io.on('connection', (socket) => {
   console.log(`[+] ${socket.id} connected`);
@@ -56,6 +57,9 @@ io.on('connection', (socket) => {
 
     console.log(`[→] ${socket.id} joined "${roomId}" (peers: ${peers.length}, new: ${!alreadyInRoom})`);
 
+    // Send chat history to the newly joined socket
+    socket.emit('chat-history', roomHistory.get(roomId) || []);
+
     if (!alreadyInRoom) {
       peers.forEach(peerId => io.to(peerId).emit('user-connected', socket.id));
     }
@@ -65,7 +69,17 @@ io.on('connection', (socket) => {
   socket.on('answer',         (p) => io.to(p.target).emit('answer', p));
   socket.on('ice-candidate',  (p) => io.to(p.target).emit('ice-candidate', { candidate: p.candidate, sender: socket.id }));
   socket.on('stop-screen-share', (p) => io.to(p.target).emit('stop-screen-share'));
-  socket.on('chat-message',   (p) => io.to(p.target).emit('chat-message', p));
+  
+  socket.on('chat-message', (p) => {
+    const roomId = socketRooms.get(socket.id);
+    if (roomId) {
+      if (!roomHistory.has(roomId)) roomHistory.set(roomId, []);
+      roomHistory.get(roomId).push(p);
+      if (roomHistory.get(roomId).length > 500) roomHistory.get(roomId).shift();
+    }
+    io.to(p.target).emit('chat-message', p);
+  });
+  
   socket.on('quality-request',(p) => io.to(p.target).emit('quality-request', p));
 
   socket.on('disconnect', (reason) => {

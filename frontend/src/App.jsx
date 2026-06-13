@@ -43,9 +43,17 @@ const METERED_API_KEY = import.meta.env.VITE_METERED_API_KEY || '';
 // Fallback STUN-only config used before Metered credentials are loaded
 const STUN_ONLY = [
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' }
 ];
+
+const myClientId = (() => {
+  let id = localStorage.getItem('togever_client_id');
+  if (!id) {
+    id = Math.random().toString(36).slice(2);
+    localStorage.setItem('togever_client_id', id);
+  }
+  return id;
+})();
 
 export default function App() {
   // ── UI State ──────────────────────────────────────────────────────────────
@@ -242,25 +250,32 @@ export default function App() {
     socket.on('chat-message', (payload) => {
       setChatMessages(prev => [
         ...prev,
-        { text: payload.text, type: payload.type || 'text', gifUrl: payload.gifUrl, sender: 'peer', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
+        { text: payload.text, type: payload.type || 'text', gifUrl: payload.gifUrl, sender: 'peer', time: payload.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
       ]);
       setIsChatOpen(true);
     });
 
+    socket.on('chat-history', (historyMsgs) => {
+      setChatMessages(historyMsgs.map(m => ({ 
+        text: m.text, 
+        type: m.type || 'text', 
+        gifUrl: m.gifUrl, 
+        time: m.time, 
+        sender: m.clientId === myClientId ? 'me' : 'peer' 
+      })));
+    });
+
     socket.on('user-disconnected', (disconnectedId) => {
-      // Only reset if it's actually OUR peer who disconnected, not some random user
-      if (disconnectedId && remoteSocketIdRef.current && disconnectedId !== remoteSocketIdRef.current) {
-        console.log('[TOGEVER] Ignoring disconnect of non-peer:', disconnectedId);
-        return;
+      console.log('[TOGEVER] Peer disconnected', disconnectedId);
+      if (remoteSocketIdRef.current === disconnectedId) {
+        setHasRemoteVideo(false);
+        setRemoteSocketId(null);
+        setIsConnected(false);
+        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+        audioElementsRef.current.forEach(el => { el.pause(); el.srcObject = null; });
+        audioElementsRef.current = [];
+        if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
       }
-      console.log('[TOGEVER] Peer disconnected:', disconnectedId);
-      setRemoteSocketId(null);
-      setIsConnected(false);
-      setHasRemoteVideo(false);
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-      audioElementsRef.current.forEach(el => { el.pause(); el.srcObject = null; });
-      audioElementsRef.current = [];
-      if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
     });
 
     const roomFromUrl = new URLSearchParams(window.location.search).get('room');
@@ -707,9 +722,9 @@ export default function App() {
   const handleSendMessage = (e) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
-    const msg = { text: chatInput.trim(), type: 'text', sender: 'me', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
-    setChatMessages(prev => [...prev, msg]);
-    socketRef.current.emit('chat-message', { target: remoteSocketId, text: chatInput.trim(), type: 'text' });
+    const msg = { text: chatInput.trim(), type: 'text', clientId: myClientId, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+    setChatMessages(prev => [...prev, { ...msg, sender: 'me' }]);
+    socketRef.current.emit('chat-message', { target: remoteSocketId, ...msg });
     setChatInput('');
   };
 
@@ -729,9 +744,9 @@ export default function App() {
   };
 
   const sendGif = (url) => {
-    const payload = { target: remoteSocketId, type: 'gif', gifUrl: url };
-    socketRef.current.emit('chat-message', payload);
-    setChatMessages(prev => [...prev, { ...payload, sender: 'me', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+    const payload = { type: 'gif', gifUrl: url, clientId: myClientId, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+    socketRef.current.emit('chat-message', { target: remoteSocketId, ...payload });
+    setChatMessages(prev => [...prev, { ...payload, sender: 'me' }]);
     setShowGifPicker(false);
     setGifSearchQuery('');
     setGifs([]);
