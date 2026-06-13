@@ -121,8 +121,12 @@ export default function App() {
     fetch(url)
       .then(r => r.json())
       .then(servers => {
-        iceServersRef.current = servers;
-        console.log('[TOGEVER] Metered ICE servers loaded:', servers.length, 'servers');
+        if (Array.isArray(servers)) {
+          iceServersRef.current = servers;
+          console.log('[TOGEVER] Metered ICE servers loaded:', servers.length, 'servers');
+        } else {
+          console.error('[TOGEVER] Metered API returned error, fallback to STUN:', servers);
+        }
       })
       .catch(err => {
         console.error('[TOGEVER] Failed to fetch Metered TURN credentials, using STUN only:', err);

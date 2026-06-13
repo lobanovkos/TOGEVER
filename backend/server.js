@@ -10,17 +10,16 @@ app.use(cors());
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
+  // Use polling + websocket. Polling is more reliable through proxies and Russian network filtering.
+  transports: ['polling', 'websocket'],
   pingTimeout: 60000,
-  pingInterval: 15000,   // 15s pings keep Railway proxy alive (safe margin below any 30s cutoff)
-  transports: ['websocket', 'polling'],
+  pingInterval: 15000,
 });
 
-// Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', uptime: Math.floor(process.uptime()), connections: io.engine.clientsCount });
 });
 
-// Serve built frontend
 const DIST = path.join(__dirname, '../frontend/dist');
 app.use(express.static(DIST));
 app.get('/{*path}', (req, res) => {
@@ -29,25 +28,21 @@ app.get('/{*path}', (req, res) => {
   });
 });
 
-// Track room per socket
 const socketRooms = new Map();
 
 io.on('connection', (socket) => {
   console.log(`[+] ${socket.id} connected`);
 
   socket.on('join-room', (roomId) => {
-    // CRITICAL: check if socket is already in this room to avoid double user-connected
     const alreadyInRoom = socket.rooms.has(roomId);
-
     const room = io.sockets.adapter.rooms.get(roomId);
     const peers = room ? Array.from(room).filter(id => id !== socket.id) : [];
 
     socket.join(roomId);
     socketRooms.set(socket.id, roomId);
 
-    console.log(`[→] ${socket.id} joined room "${roomId}" (peers: ${peers.length}, alreadyIn: ${alreadyInRoom})`);
+    console.log(`[→] ${socket.id} joined "${roomId}" (peers: ${peers.length}, new: ${!alreadyInRoom})`);
 
-    // Only send user-connected if this is a NEW join (prevents double offers)
     if (!alreadyInRoom) {
       peers.forEach(peerId => io.to(peerId).emit('user-connected', socket.id));
     }
