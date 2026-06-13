@@ -1015,22 +1015,29 @@ export default function App() {
                         <span className="text-neutral-200">Chat</span>
                         <button onClick={() => setIsChatOpen(false)} className="text-neutral-500 hover:text-white transition text-xs">✕ Close</button>
                       </div>
-                      <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 min-w-[320px]">
+                      <div className="flex-1 p-4 overflow-y-auto flex flex-col min-w-[320px]">
                         {chatMessages.length === 0 && (
                           <div className="text-center text-neutral-600 text-sm mt-10">No messages yet. Say hi!</div>
                         )}
-                        {chatMessages.map((msg, i) => (
-                          <div key={i} className={`flex flex-col ${msg.sender === 'me' ? 'items-end' : 'items-start'}`}>
-                            <div className={`px-4 py-2 rounded-2xl max-w-[85%] text-sm ${msg.sender === 'me' ? 'bg-purple-600 text-white rounded-br-none' : 'bg-zinc-800 text-neutral-200 rounded-bl-none'} ${msg.type === 'gif' ? 'p-1' : ''}`}>
-                              {msg.type === 'gif' ? (
-                                <img src={msg.gifUrl} alt="GIF" className="rounded-xl w-full max-w-[200px]" />
-                              ) : (
-                                msg.text
+                        {chatMessages.map((msg, i) => {
+                          const isLastInGroup = i === chatMessages.length - 1 || 
+                                                chatMessages[i + 1].sender !== msg.sender || 
+                                                chatMessages[i + 1].time !== msg.time;
+                          return (
+                            <div key={i} className={`flex flex-col ${msg.sender === 'me' ? 'items-end' : 'items-start'} ${isLastInGroup ? 'mb-3' : 'mb-1'}`}>
+                              <div className={`px-4 py-2 max-w-[85%] text-sm rounded-2xl ${msg.sender === 'me' ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-neutral-200'} ${isLastInGroup ? (msg.sender === 'me' ? 'rounded-br-none' : 'rounded-bl-none') : ''} ${msg.type === 'gif' ? 'p-1 bg-transparent' : ''}`}>
+                                {msg.type === 'gif' ? (
+                                  <img src={msg.gifUrl} alt="GIF" className="rounded-xl w-full max-w-[200px]" />
+                                ) : (
+                                  msg.text
+                                )}
+                              </div>
+                              {isLastInGroup && (
+                                <span className="text-[10px] text-neutral-500 mt-1">{msg.time}</span>
                               )}
                             </div>
-                            <span className="text-[10px] text-neutral-500 mt-1">{msg.time}</span>
-                          </div>
-                        ))}
+                          );
+                        })}
                         <div ref={chatBottomRef} />
                       </div>
                       <div className="relative border-t border-white/5 bg-black/50">
