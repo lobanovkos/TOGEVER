@@ -107,6 +107,8 @@ export default function App() {
   const localAudioCtxRef  = useRef(null);
   const localGainNodeRef  = useRef(null);
   const localDestNodeRef  = useRef(null);
+  const trackMetaRef      = useRef({}); // { trackId: 'mic' | 'screen' }
+  const remoteAudioTracksRef = useRef([]); // { trackId, gainNode, kind }
   const screenStreamRef   = useRef(null);
   const remoteVideoRef    = useRef(null);
   const audioElementsRef  = useRef([]);
@@ -245,6 +247,17 @@ export default function App() {
       };
       const params = presets[payload.preset];
       if (params) { setStreamQuality(payload.preset); updateVideoQuality(params); }
+    });
+
+    socket.on('track-meta', (payload) => {
+      trackMetaRef.current[payload.trackId] = payload.kind;
+      const trackObj = remoteAudioTracksRef.current.find(t => t.trackId === payload.trackId);
+      if (trackObj) {
+        trackObj.kind = payload.kind;
+        if (trackObj.gainNode) {
+          trackObj.gainNode.gain.value = payload.kind === 'screen' ? 1.0 : remoteMicGainRef.current;
+        }
+      }
     });
 
     socket.on('chat-message', (payload) => {
@@ -432,8 +445,11 @@ export default function App() {
           
           const source = ctx.createMediaStreamSource(dummyAudio.srcObject);
           const gain = ctx.createGain();
-          gain.gain.value = remoteMicGainRef.current;
-          gainNodeRef.current = gain;
+          
+          const kind = trackMetaRef.current[track.id] || 'unknown';
+          gain.gain.value = kind === 'screen' ? 1.0 : remoteMicGainRef.current;
+          
+          remoteAudioTracksRef.current.push({ trackId: track.id, gainNode: gain, kind });
           
           const dest = ctx.createMediaStreamDestination();
           destNodeRef.current = dest;
@@ -462,10 +478,11 @@ export default function App() {
           dummyAudio.pause();
           dummyAudio.srcObject = null;
           audioElementsRef.current = audioElementsRef.current.filter(el => el !== audioEl);
+          remoteAudioTracksRef.current = remoteAudioTracksRef.current.filter(t => t.trackId !== track.id);
+          
           if (audioCtxRef.current) {
             audioCtxRef.current.close().catch(() => {});
             audioCtxRef.current = null;
-            gainNodeRef.current = null;
             destNodeRef.current = null;
           }
         };
@@ -535,6 +552,7 @@ export default function App() {
             const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'audio');
             if (sender) await sender.replaceTrack(boostedTrack);
           }
+          socketRef.current?.emit('track-meta', { target: remoteSocketIdRef.current, trackId: boostedTrack.id, kind: 'mic' });
         }
 
         setIsMicMuted(false);
@@ -579,7 +597,11 @@ export default function App() {
     const val = parseFloat(e.target.value);
     setRemoteMicGain(val);
     remoteMicGainRef.current = val;
-    if (gainNodeRef.current) gainNodeRef.current.gain.value = val;
+    remoteAudioTracksRef.current.forEach(t => {
+      if (t.kind !== 'screen' && t.gainNode) {
+        t.gainNode.gain.value = val;
+      }
+    });
   };
 
   const handleLocalMicGainChange = (e) => {
@@ -619,7 +641,12 @@ export default function App() {
         if (!localStreamRef.current) localStreamRef.current = new MediaStream();
         stream.getTracks().forEach(track => {
           localStreamRef.current.addTrack(track);
-          if (pcRef.current) pcRef.current.addTrack(track, localStreamRef.current);
+          if (pcRef.current) {
+            pcRef.current.addTrack(track, localStreamRef.current);
+            if (track.kind === 'audio') {
+              socketRef.current?.emit('track-meta', { target: remoteSocketIdRef.current, trackId: track.id, kind: 'screen' });
+            }
+          }
           track.onended = () => { if (screenStreamRef.current) stopScreenSharingLogic(); };
         });
         setIsScreenSharing(true);
