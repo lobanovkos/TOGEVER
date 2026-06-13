@@ -103,9 +103,13 @@ export default function App() {
   const statsBaselineRef  = useRef({ bytesReceived: 0, timestamp: 0 });
   const micGainRef        = useRef(1.0);   // mirror of micGain state (for sync callbacks)
   const iceServersRef     = useRef(STUN_ONLY); // populated async from Metered.ca API
+  const inRoomRef         = useRef(false);     // mirrors inRoom state for use in socket callbacks
+  const roomIdRef         = useRef('');        // mirrors roomId state for reconnect logic
 
-  // Keep ref in sync with state
+  // Keep refs in sync with state
   useEffect(() => { micGainRef.current = micGain; }, [micGain]);
+  useEffect(() => { inRoomRef.current = inRoom; }, [inRoom]);
+  useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
 
   // ── Fetch dynamic TURN credentials from Metered.ca API ───────────────────
   useEffect(() => {
@@ -142,11 +146,14 @@ export default function App() {
 
     socket.on('connect', () => {
       console.log('[TOGEVER] Socket connected', socket.id);
-      // Auto-rejoin room if we were in one (handles Socket.IO reconnects)
-      const currentRoom = new URLSearchParams(window.location.search).get('room');
-      if (currentRoom) {
-        console.log('[TOGEVER] Rejoining room after reconnect:', currentRoom);
-        socket.emit('join-room', currentRoom);
+    });
+
+    // RECONNECT only (not initial connect) — safely rejoin room without causing double-join
+    socket.io.on('reconnect', () => {
+      console.log('[TOGEVER] Socket reconnected');
+      if (inRoomRef.current && roomIdRef.current) {
+        console.log('[TOGEVER] Auto-rejoining room after reconnect:', roomIdRef.current);
+        socket.emit('join-room', roomIdRef.current);
       }
     });
 

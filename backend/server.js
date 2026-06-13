@@ -10,13 +10,9 @@ app.use(cors());
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
-  // Increase timeouts so Railway proxy doesn't kill idle WebSocket connections
   pingTimeout: 60000,
-  pingInterval: 25000,
-  // Allow both websocket and polling so Railway doesn't cut the connection
+  pingInterval: 15000,   // 15s pings keep Railway proxy alive (safe margin below any 30s cutoff)
   transports: ['websocket', 'polling'],
-  // Upgrade timeout
-  upgradeTimeout: 30000,
 });
 
 // Health check
@@ -27,26 +23,21 @@ app.get('/health', (req, res) => {
 // Serve built frontend
 const DIST = path.join(__dirname, '../frontend/dist');
 app.use(express.static(DIST));
-// SPA fallback (Express 5 syntax)
 app.get('/{*path}', (req, res) => {
   res.sendFile(path.join(DIST, 'index.html'), (err) => {
     if (err) res.status(200).json({ status: 'ok' });
   });
 });
 
-// Track which room each socket is in (for disconnect cleanup)
+// Track room per socket
 const socketRooms = new Map();
 
 io.on('connection', (socket) => {
   console.log(`[+] ${socket.id} connected`);
 
   socket.on('join-room', (roomId) => {
-    // Leave any previous room first
-    const prevRoom = socketRooms.get(socket.id);
-    if (prevRoom && prevRoom !== roomId) {
-      socket.leave(prevRoom);
-      socket.to(prevRoom).emit('user-disconnected', socket.id);
-    }
+    // CRITICAL: check if socket is already in this room to avoid double user-connected
+    const alreadyInRoom = socket.rooms.has(roomId);
 
     const room = io.sockets.adapter.rooms.get(roomId);
     const peers = room ? Array.from(room).filter(id => id !== socket.id) : [];
@@ -54,10 +45,12 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     socketRooms.set(socket.id, roomId);
 
-    console.log(`[→] ${socket.id} joined room "${roomId}" (${peers.length} peer(s))`);
+    console.log(`[→] ${socket.id} joined room "${roomId}" (peers: ${peers.length}, alreadyIn: ${alreadyInRoom})`);
 
-    // Tell existing peers someone new joined
-    peers.forEach(peerId => io.to(peerId).emit('user-connected', socket.id));
+    // Only send user-connected if this is a NEW join (prevents double offers)
+    if (!alreadyInRoom) {
+      peers.forEach(peerId => io.to(peerId).emit('user-connected', socket.id));
+    }
   });
 
   socket.on('offer',          (p) => io.to(p.target).emit('offer', p));
@@ -69,8 +62,6 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', (reason) => {
     console.log(`[-] ${socket.id} disconnected (${reason})`);
-
-    // Only notify peers in the SAME room (not everyone on the server!)
     const roomId = socketRooms.get(socket.id);
     if (roomId) {
       socket.to(roomId).emit('user-disconnected', socket.id);
